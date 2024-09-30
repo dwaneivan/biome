@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::{env, io, iter};
 
-use biome_console::fmt::MarkupElements;
+use biome_console::fmt::{Display, MarkupElements};
 use biome_console::{fmt, markup, HorizontalLine, Markup, MarkupBuf, MarkupElement, MarkupNode};
 use biome_text_edit::TextEdit;
 use unicode_width::UnicodeWidthStr;
@@ -465,6 +465,38 @@ impl Visit for PrintAdvices<'_, '_> {
         let mut fmt = IndentWriter::wrap(self.0, &mut slot, true, "  ");
         let mut visitor = PrintAdvices(&mut fmt);
         advice.record(&mut visitor)
+    }
+
+    fn record_table(
+        &mut self,
+        headers: &[&dyn Display],
+        columns: &[&[&dyn Display]],
+    ) -> io::Result<()> {
+        debug_assert_eq!(
+            headers.len(),
+            columns.len(),
+            "headers and columns must have the same number"
+        );
+        let mut headers_iter = headers.iter();
+        while let Some(header_cell) = headers_iter.next() {
+            self.0.write_markup(markup!({ header_cell }))?;
+        }
+
+        if columns.is_empty() {
+            return Ok(());
+        }
+
+        let rows_number = columns[0].len();
+        let columns_number = headers.len();
+
+        for current_row_index in 0..rows_number {
+            for current_column_index in 0..columns_number {
+                let cell = columns[current_row_index][current_column_index];
+                self.0.write_markup(markup!({ cell }))?
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -1022,4 +1054,7 @@ mod tests {
             "\nactual:\n{diag:#?}\nexpected:\n{expected:#?}"
         );
     }
+
+    #[test]
+    fn test_table_advice() {}
 }

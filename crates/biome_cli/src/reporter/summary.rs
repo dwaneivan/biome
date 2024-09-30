@@ -2,7 +2,10 @@ use crate::reporter::terminal::ConsoleTraversalSummary;
 use crate::{DiagnosticsPayload, Execution, Reporter, ReporterVisitor, TraversalSummary};
 use biome_console::fmt::{Display, Formatter};
 use biome_console::{markup, Console, ConsoleExt, HorizontalLine, Padding, SOFT_LINE};
-use biome_diagnostics::{Resource, Severity};
+use biome_diagnostics::{
+    category, Advices, Category, Diagnostic, MessageAndDescription, PrintDiagnostic, Resource,
+    Severity, Visit,
+};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
@@ -84,6 +87,12 @@ impl<'a> ReporterVisitor for SummaryReporterVisitor<'a> {
                     }
                 }
 
+                if let Some(category) = category {
+                    if category.name() == "parse" {
+                        files_to_diagnostics.insert_parse(location);
+                    }
+                }
+
                 if execution.is_check() || execution.is_lint() || execution.is_ci() {
                     if let Some(category) = category {
                         if category.name().starts_with("lint/")
@@ -123,6 +132,7 @@ struct FileToDiagnostics {
     formats: BTreeSet<String>,
     organize_imports: BTreeSet<String>,
     lints: LintsByCategory,
+    parse: BTreeSet<String>,
 }
 
 impl FileToDiagnostics {
@@ -138,55 +148,90 @@ impl FileToDiagnostics {
     fn insert_organize_imports(&mut self, location: &str) {
         self.organize_imports.insert(location.into());
     }
+
+    fn insert_parse(&mut self, location: &str) {
+        self.parse.insert(location.into());
+    }
+}
+
+#[derive(Debug, Diagnostic)]
+#[diagnostic(
+    severity = Information
+)]
+struct SummaryListDiagnostic<'a> {
+    #[category]
+    category: &'static Category,
+
+    #[message]
+    message: MessageAndDescription,
+
+    #[advice]
+    list: SummaryListAdvice<'a>,
+}
+
+#[derive(Debug)]
+struct SummaryListAdvice<'a>(&'a BTreeSet<String>);
+
+impl<'a> Advices for SummaryListAdvice<'a> {
+    fn record(&self, visitor: &mut dyn Visit) -> io::Result<()> {
+        let list: Vec<_> = self.0.iter().map(|s| s as &dyn Display).collect();
+        visitor.record_list(&list)
+    }
 }
 
 impl Display for FileToDiagnostics {
     fn fmt(&self, fmt: &mut Formatter) -> io::Result<()> {
+        if !self.parse.is_empty() {
+            let diagnostic = SummaryListDiagnostic {
+                message: MessageAndDescription::from(
+                    markup! {
+                        <Warn>"The following files have parsing errors."</Warn>
+                    }
+                    .to_owned(),
+                ),
+                list: SummaryListAdvice(&self.parse),
+                category: category!("reporter/parse"),
+            };
+            fmt.write_markup(markup! {
+                {PrintDiagnostic::simple(&diagnostic)}
+            })?;
+        }
+
         if !self.formats.is_empty() {
-            let header = "Formatter ";
-            let horizontal_line = HorizontalLine::new(100usize.saturating_sub(header.len()));
+            let diagnostic = SummaryListDiagnostic {
+                message: MessageAndDescription::from(
+                    markup! {
+                        <Warn>"The following files needs to be formatted."</Warn>
+                    }
+                    .to_owned(),
+                ),
+                list: SummaryListAdvice(&self.formats),
+                category: category!("reporter/format"),
+            };
             fmt.write_markup(markup! {
-                <Emphasis>{header}</Emphasis>{horizontal_line}
+                {PrintDiagnostic::simple(&diagnostic)}
             })?;
-            SOFT_LINE.fmt(fmt)?;
-
-            fmt.write_markup(markup! {
-                <Warn>"The following files needs to be formatted:\n"</Warn>
-            })?;
-
-            for file_name in &self.formats {
-                fmt.write_markup(markup! {
-                    <Emphasis>{file_name}</Emphasis>{SOFT_LINE}
-                })?;
-            }
-            SOFT_LINE.fmt(fmt)?;
         }
 
         if !self.organize_imports.is_empty() {
-            let header = "Organize Imports ";
-            let horizontal_line = HorizontalLine::new(100usize.saturating_sub(header.len()));
+            let diagnostic = SummaryListDiagnostic {
+                message: MessageAndDescription::from(
+                    markup! {
+                        <Warn>"The following files needs to have their imports sorted."</Warn>
+                    }
+                    .to_owned(),
+                ),
+                list: SummaryListAdvice(&self.organize_imports),
+                category: category!("reporter/organizeImports"),
+            };
             fmt.write_markup(markup! {
-                <Emphasis>{header}</Emphasis>{horizontal_line}
+                {PrintDiagnostic::simple(&diagnostic)}
             })?;
-            SOFT_LINE.fmt(fmt)?;
-
-            fmt.write_markup(markup! {
-                <Warn>"The following files needs to have their imports sorted:\n"</Warn>
-            })?;
-
-            for file_name in &self.organize_imports {
-                fmt.write_markup(markup! {
-                    <Emphasis>{file_name}</Emphasis>{SOFT_LINE}
-                })?;
-            }
-            SOFT_LINE.fmt(fmt)?;
         }
 
         fmt.write_markup(markup! {
             {self.lints}
         })?;
-        SOFT_LINE.fmt(fmt)?;
-
         Ok(())
     }
 }

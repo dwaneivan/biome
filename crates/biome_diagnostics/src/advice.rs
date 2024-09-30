@@ -8,6 +8,7 @@ use biome_console::fmt::{self, Display};
 use biome_console::markup;
 use biome_text_edit::TextEdit;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeSet, HashMap};
 use std::io;
 
 /// Trait implemented by types that support emitting advices into a diagnostic
@@ -64,6 +65,15 @@ pub trait Visit {
     /// Prints a group of advices under a common title.
     fn record_group(&mut self, title: &dyn fmt::Display, advice: &dyn Advices) -> io::Result<()> {
         let _ = (title, advice);
+        Ok(())
+    }
+
+    fn record_table(
+        &mut self,
+        headers: &[&dyn Display],
+        columns: &[&[&dyn Display]],
+    ) -> io::Result<()> {
+        let _ = (headers, columns);
         Ok(())
     }
 }
@@ -208,5 +218,18 @@ where
         )?;
 
         visitor.record_diff(&self.suggestion)
+    }
+}
+
+pub struct TableAdvice<R> {
+    rows: HashMap<String, BTreeSet<R>>,
+}
+
+impl<R> Advices for TableAdvice<R>
+where
+    R: Display,
+{
+    fn record(&self, visitor: &mut dyn Visit) -> io::Result<()> {
+        visitor.record_table()
     }
 }
